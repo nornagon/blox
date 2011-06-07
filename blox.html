@@ -303,29 +303,7 @@ function main() {
 		}
 	}
 
-	var chunkIdx = []
-	for (var y = 0; y < 16; y++) {
-		for (var x = 0; x < 16; x++) {
-			for (var z = 0; z < 16; z++) {
-				var v = y*16*16+x*16+z
-				if (chunk[v]) {
-					for (var f = 0; f < 6; f++) {
-						var nx = normalX[f], ny = normalY[f], nz = normalZ[f]
-						if (x+nx < 0 || x+nx > 15 ||
-						    y+ny < 0 || y+ny > 15 ||
-								z+nz < 0 || z+nz > 15 ||
-								chunk[(y+ny)*16*16+(x+nx)*16+z+nz] == 0) {
-							for (var i = 0; i < 6; i++) {
-								var dp = cubeIdcs[f*6+i]
-								chunkIdx.push(f*16*16*16+(y+dp[1])*16*16+(x+dp[0])*16+(z+dp[2]))
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
+	// all the vertices and their properties
 	var chunkBuf = gl.createBuffer()
 	gl.bindBuffer(gl.ARRAY_BUFFER, chunkBuf)
 	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(chunkVertPos), gl.STATIC_DRAW)
@@ -338,9 +316,38 @@ function main() {
 	gl.bindBuffer(gl.ARRAY_BUFFER, normalBuf)
 	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(chunkVertNormal), gl.STATIC_DRAW)
 
+
+	// the index buffer
 	var indexBuf = gl.createBuffer()
 	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuf)
-	gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(chunkIdx), gl.STATIC_DRAW)
+	var chunkIdx
+	function rebuildChunk() {
+		chunkIdx = []
+		for (var y = 0; y < 16; y++) {
+			for (var x = 0; x < 16; x++) {
+				for (var z = 0; z < 16; z++) {
+					var v = y*16*16+x*16+z
+					if (chunk[v]) {
+						for (var f = 0; f < 6; f++) {
+							var nx = normalX[f], ny = normalY[f], nz = normalZ[f]
+							if (x+nx < 0 || x+nx > 15 ||
+									y+ny < 0 || y+ny > 15 ||
+									z+nz < 0 || z+nz > 15 ||
+									chunk[(y+ny)*16*16+(x+nx)*16+z+nz] == 0) {
+								for (var i = 0; i < 6; i++) {
+									var dp = cubeIdcs[f*6+i]
+									chunkIdx.push(f*16*16*16+(y+dp[1])*16*16+(x+dp[0])*16+(z+dp[2]))
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(chunkIdx), gl.STATIC_DRAW)
+	}
+
+	rebuildChunk()
 
 	var proj = makePerspective(60, canvas.width/canvas.height, 0.1, 100)
 	var mv = Matrix.I(4)
@@ -366,7 +373,7 @@ function main() {
 		mv = Matrix.I(4)
 		mv.elements[1][3] = -6
 		mv.elements[2][3] = -20
-		//mv = mv.x(rotY((now - lastFrame) / 1000))
+		mv = mv.x(rotY((now - lastFrame) / 1000))
 
 		program.uniform("projection", proj)
 		program.uniform("modelView", mv)
@@ -419,7 +426,7 @@ function main() {
 		near_point = near_point.x(1/near_point.elements[3])
 
 		var cam_pos = mv.inverse().col(4)
-		var ray_dir = near_point.subtract(cam_pos)
+		var ray_dir = near_point.subtract(cam_pos).toUnitVector()
 		// cast ray from cam_pos in direction of ray_dir.
 		var origin = {
 			x: cam_pos.elements[0],
@@ -432,22 +439,49 @@ function main() {
 			z: ray_dir.elements[2],
 		}
 
+		var cx = Math.floor(origin.x)
+		var cy = Math.floor(origin.y)
+		var cz = Math.floor(origin.z)
 
-		for (var y = 0; y < 16; y++) {
-			for (var x = 0; x < 16; x++) {
-				for (var z = 0; z < 16; z++) {
-					var v = y*16*16+x*16+z
-					if (chunk[v]) {
-						// z face
-						var t = (z-origin.z) / ray.z
-						var px = t*ray.x+origin.x
-						var py = t*ray.y+origin.y
-						if (px >= x && py >= y && px < x+1 && py < y+1 && t >= 0) {
-							console.log("hit!",x,y,z)
-						}
-					}
+		var stepX = ray.x > 0 ? 1 : -1
+		var stepY = ray.y > 0 ? 1 : -1
+		var stepZ = ray.z > 0 ? 1 : -1
+		var nextX = stepX > 0 ? cx+1 : cx
+		var nextY = stepY > 0 ? cy+1 : cy
+		var nextZ = stepZ > 0 ? cz+1 : cz
+		var tMaxX = (nextX-origin.x) / ray.x
+		var tMaxY = (nextY-origin.y) / ray.y
+		var tMaxZ = (nextZ-origin.z) / ray.z
+		var tDeltaX = Math.abs(1/ray.x)
+		var tDeltaY = Math.abs(1/ray.y)
+		var tDeltaZ = Math.abs(1/ray.z)
+
+		for (var i = 0; i < 1000; i++) {
+			if (cx >= 0 && cy >= 0 && cz >= 0 && cx < 16 && cy < 16 && cz < 16) {
+				if (chunk[cy*16*16+cx*16+cz]) { break }
+			}
+			if (tMaxX < tMaxY) {
+				if (tMaxX < tMaxZ) {
+					cx += stepX
+					tMaxX += tDeltaX
+				} else {
+					cz += stepZ
+					tMaxZ += tDeltaZ
+				}
+			} else {
+				if (tMaxY < tMaxZ) {
+					cy += stepY
+					tMaxY += tDeltaY
+				} else {
+					cz += stepZ
+					tMaxZ += tDeltaZ
 				}
 			}
+		}
+		if (i < 1000) {
+			console.log(cx, cy, cz)
+			chunk[cy*16*16+cx*16+cz] = 0
+			rebuildChunk()
 		}
 	}
 	document.onmousemove = function (e) {
