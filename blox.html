@@ -403,26 +403,52 @@ function main() {
 	}
 
 	canvas.onmousedown = function (e) {
+		// translate x/y coords into normalised [-1,1] screen coords
 		var ww = canvas.width
 		var wh = canvas.height
-		var window_y = (wh - e.clientY) - wh/2
 		var window_x = e.clientX - ww/2
-		var norm_y = 2 * window_y / wh
+		var window_y = (wh - e.clientY) - wh/2
 		var norm_x = 2 * window_x / ww
+		var norm_y = 2 * window_y / wh
 
-		var znear = 0.1, fovy = 60
-		var ymax = znear * Math.tan(fovy * Math.PI / 360.0)
-		var near_height = ymax * 2
-		var aspect = canvas.width / canvas.height
-		var y = near_height * norm_y
-		var x = near_height * aspect * norm_x
-		console.log(x,y)
+		// screen coordinate s, world coordinate w, ' = inverse
 		// s = P M w
-		// so w = M' P' P M w = M' P' s
+		// so w = M' P' P M w = M' P' s = (P M)' s
 		var unview = proj.x(mv).inverse()
-		var world = unview.x($V([x, y, -znear, 1]))
-		world = world.x(1/world.elements[3])
-		console.log(world.elements)
+		var near_point = unview.x($V([norm_x, norm_y, 0, 1]))
+		near_point = near_point.x(1/near_point.elements[3])
+
+		var cam_pos = mv.inverse().col(4)
+		var ray_dir = near_point.subtract(cam_pos)
+		// cast ray from cam_pos in direction of ray_dir.
+		var origin = {
+			x: cam_pos.elements[0],
+			y: cam_pos.elements[1],
+			z: cam_pos.elements[2],
+		}
+		var ray = {
+			x: ray_dir.elements[0],
+			y: ray_dir.elements[1],
+			z: ray_dir.elements[2],
+		}
+
+
+		for (var y = 0; y < 16; y++) {
+			for (var x = 0; x < 16; x++) {
+				for (var z = 0; z < 16; z++) {
+					var v = y*16*16+x*16+z
+					if (chunk[v]) {
+						// z face
+						var t = (z-origin.z) / ray.z
+						var px = t*ray.x+origin.x
+						var py = t*ray.y+origin.y
+						if (px >= x && py >= y && px < x+1 && py < y+1 && t >= 0) {
+							console.log("hit!",x,y,z)
+						}
+					}
+				}
+			}
+		}
 	}
 	document.onmousemove = function (e) {
 	}
