@@ -13,6 +13,15 @@ Matrix.prototype.flatten = function () {
 	return result;
 }
 
+Matrix.Translation = function (x,y,z) {
+	return $M([
+		[1, 0, 0, x],
+		[0, 1, 0, y],
+		[0, 0, 1, z],
+		[0, 0, 0, 1]
+	])
+}
+
 var glu = function (canvas) {
 	var gl = null
 	var types = ['webgl', 'experimental-webgl', 'webkit-3d', 'moz-webgl']
