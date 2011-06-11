@@ -30,8 +30,8 @@ function main() {
 		return
 	}
 
-	canvas.width = Math.floor(window.innerWidth)
-	canvas.height = Math.floor(window.innerHeight * 0.9)
+	canvas.width = 1024
+	canvas.height = 1024
 	gl.viewport(0, 0, canvas.width, canvas.height)
 
 	gl.clearColor(0,0,0,1)
@@ -163,22 +163,28 @@ function main() {
 		return this.blocks[l]
 	}
 
-	var chunk = new Chunk(0,0,0)
-	for (var y = 0; y < 16; y++) {
-		for (var x = 0; x < 16; x++) {
-			for (var z = 0; z < 16; z++) {
-				var dx = (x-4), dy = (y-4), dz = (z-4)
-				if (dx*dx+dy*dy+dz*dz <= 16) {
-					chunk.block(x,y,z, 1)
-				} else {
-					chunk.block(x,y,z, 0)
+	var chunks = []
+	var chunkTable = {}
+	for (var i = 0; i < 4; i++) {
+		var chunk = new Chunk(0,0,i)
+		chunkTable[[0,0,i]] = chunk
+		for (var y = 0; y < 16; y++) {
+			for (var x = 0; x < 16; x++) {
+				for (var z = 0; z < 16; z++) {
+					var dx = (x-4), dy = (y-4), dz = (z-4)
+					if (dx*dx+dy*dy+dz*dz <= 16) {
+						chunk.block(x,y,z, 1)
+					} else {
+						chunk.block(x,y,z, 0)
+					}
 				}
 			}
 		}
+		chunk.rebuild()
+		chunks.push(chunk)
 	}
-	chunk.rebuild()
 
-	var proj = gl.u.makePerspective(60, canvas.width/canvas.height, 0.1, 100)
+	var proj = gl.u.makePerspective(60, canvas.clientWidth/canvas.clientHeight, 0.1, 100)
 	var mv = Matrix.I(4)
 
 	function rotY(t) {
@@ -198,28 +204,37 @@ function main() {
 		}
 		var now = Date.now()
 		gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+		proj = gl.u.makePerspective(60, canvas.clientWidth/canvas.clientHeight, 0.1, 100)
 
 		mv = Matrix.I(4)
 		mv.elements[1][3] = -6
 		mv.elements[2][3] = -20
-		mv = mv.x(rotY((now - lastFrame) / 1000))
+		mv = mv.x(rotY((now - lastFrame) / 10000))
 
 		program.uniform("projection", proj)
-		program.uniform("modelView", mv)
-		program.uniform("normalMatrix", mv.minor(1,1,3,3).inverse().transpose())
 		var o = 1/Math.sqrt(3)
 		program.uniform("lightDir", [o,o,o])
 		program.uniform("lightColor", [1,1,1])
 		program.uniform("ambientColor", [0.3,0.3,0.2])
 
-		gl.bindBuffer(gl.ARRAY_BUFFER, chunk.posBuffer)
+		// TODO: separate these buffers
+		gl.bindBuffer(gl.ARRAY_BUFFER, chunks[0].posBuffer)
 		gl.vertexAttribPointer(program.positionAttr, 3, gl.FLOAT, false, 0, 0)
-		gl.bindBuffer(gl.ARRAY_BUFFER, chunk.normalBuffer)
+		gl.bindBuffer(gl.ARRAY_BUFFER, chunks[0].normalBuffer)
 		gl.vertexAttribPointer(program.normalAttr, 3, gl.FLOAT, false, 0, 0)
-		gl.bindBuffer(gl.ARRAY_BUFFER, colorBuf)
-		gl.vertexAttribPointer(program.colorAttr, 4, gl.FLOAT, false, 0, 0)
-		gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, chunk.indexBuffer)
-		gl.drawElements(gl.TRIANGLES, chunk.numElems, gl.UNSIGNED_SHORT, 0)
+
+		for (var i = 0; i < chunks.length; i++) {
+			var chunk = chunks[i]
+			var mv_ = mv.x(chunk.mat)
+			program.uniform("modelView", mv_)
+			program.uniform("normalMatrix", mv_.minor(1,1,3,3).inverse().transpose())
+
+			gl.bindBuffer(gl.ARRAY_BUFFER, colorBuf)
+			gl.vertexAttribPointer(program.colorAttr, 4, gl.FLOAT, false, 0, 0)
+			gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, chunk.indexBuffer)
+			gl.drawElements(gl.TRIANGLES, chunk.numElems, gl.UNSIGNED_SHORT, 0)
+		}
+		console.log(chunk.numElems)
 	}
 
 	var running = true
@@ -240,8 +255,8 @@ function main() {
 
 	canvas.onmousedown = function (e) {
 		// translate x/y coords into normalised [-1,1] screen coords
-		var ww = canvas.width
-		var wh = canvas.height
+		var ww = canvas.clientWidth
+		var wh = canvas.clientHeight
 		var window_x = e.clientX - ww/2
 		var window_y = (wh - e.clientY) - wh/2
 		var norm_x = 2 * window_x / ww
@@ -268,27 +283,51 @@ function main() {
 			z: ray_dir.elements[2],
 		}
 
+		raycast({x:origin.x/16,y:origin.y/16,z:origin.z/16}, {x:ray.x/16,y:ray.y/16,z:ray.z/16}, 100, function (cx,cy,cz) {
+			var chunk
+			if (chunk = chunkTable[[cx,cy,cz]]) {
+				return raycast(origin, ray, 1000, function (bx,by,bz) {
+					var x = bx - 16*cx
+					var y = by - 16*cy
+					var z = bz - 16*cz
+					if (x >= 0 && y >= 0 && z >= 0 && x < 16 && y < 16 && z < 16) {
+						if (chunk.block(x,y,z)) {
+							chunk.block(x,y,z,0)
+							chunk.rebuild()
+							return true
+						}
+					}
+				})
+			}
+		})
+	}
+	document.onmousemove = function (e) {
+	}
+	document.onmouseup = function (e) {
+	}
+
+	function raycast(origin, direction, length, cb) {
 		var cx = Math.floor(origin.x)
 		var cy = Math.floor(origin.y)
 		var cz = Math.floor(origin.z)
 
-		var stepX = ray.x > 0 ? 1 : -1
-		var stepY = ray.y > 0 ? 1 : -1
-		var stepZ = ray.z > 0 ? 1 : -1
+		var stepX = direction.x > 0 ? 1 : -1
+		var stepY = direction.y > 0 ? 1 : -1
+		var stepZ = direction.z > 0 ? 1 : -1
 		var nextX = stepX > 0 ? cx+1 : cx
 		var nextY = stepY > 0 ? cy+1 : cy
 		var nextZ = stepZ > 0 ? cz+1 : cz
-		var tMaxX = (nextX-origin.x) / ray.x
-		var tMaxY = (nextY-origin.y) / ray.y
-		var tMaxZ = (nextZ-origin.z) / ray.z
-		var tDeltaX = Math.abs(1/ray.x)
-		var tDeltaY = Math.abs(1/ray.y)
-		var tDeltaZ = Math.abs(1/ray.z)
+		var tMaxX = (nextX-origin.x) / direction.x
+		var tMaxY = (nextY-origin.y) / direction.y
+		var tMaxZ = (nextZ-origin.z) / direction.z
+		var tDeltaX = Math.abs(1/direction.x)
+		var tDeltaY = Math.abs(1/direction.y)
+		var tDeltaZ = Math.abs(1/direction.z)
 
-		for (var i = 0; i < 1000; i++) {
-			if (cx >= 0 && cy >= 0 && cz >= 0 && cx < 16 && cy < 16 && cz < 16) {
-				if (chunk.block(cx,cy,cz)) { break }
-			}
+		var distanceTravelled = 0
+
+		while (distanceTravelled < length) {
+			if (cb(cx,cy,cz)) { return true }
 			if (tMaxX < tMaxY) {
 				if (tMaxX < tMaxZ) {
 					cx += stepX
@@ -306,17 +345,11 @@ function main() {
 					tMaxZ += tDeltaZ
 				}
 			}
+			distanceTravelled++; // HACK, should calculate actual Cartesian dist.
 		}
-		if (i < 1000) {
-			console.log(cx, cy, cz)
-			chunk.block(cx,cy,cz, 0)
-			chunk.rebuild()
-		}
+		return false
 	}
-	document.onmousemove = function (e) {
-	}
-	document.onmouseup = function (e) {
-	}
+
 	tick()
 }
 
